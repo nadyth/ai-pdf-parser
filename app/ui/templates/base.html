@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{% block title %}PDF Parser{% endblock %}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/app.css" />
+  <script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/ui/" class="brand">PDF Parser</a>
+      <a href="/ui/">Documents</a>
+      <a href="/ui/rules">Rules</a>
+      <a href="/docs" target="_blank">API docs</a>
+      <form method="post" action="/ui/logout" class="logout">
+        <button type="submit">Log out</button>
+      </form>
+    </nav>
+  </header>
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>

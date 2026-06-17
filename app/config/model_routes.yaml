@@ -1,0 +1,57 @@
+# Model routes for the PDF parser pipeline.
+#
+# Resolution order (highest priority wins):
+#   1. Explicit model override (rule.model)
+#   2. Named route override (rule.model_route)
+#   3. Task default route (this file)
+#   4. Global _default route (this file)
+
+providers:
+  ollama:
+    type: litellm
+    api_key_env: OLLAMA_API_KEY
+    base_url: https://ollama.com
+
+  openai:
+    type: litellm
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+
+  anthropic:
+    type: litellm
+    api_key_env: ANTHROPIC_API_KEY
+    base_url: https://api.anthropic.com/v1
+
+  gemini:
+    type: litellm
+    api_key_env: GEMINI_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+
+  mistral:
+    type: litellm
+    api_key_env: MISTRAL_API_KEY
+    base_url: https://api.mistral.ai/v1
+
+routes:
+  # Vision pass over each rendered page image. Must be a vision-capable model.
+  page_vision:
+    provider: ollama
+    model: minimax-m3:cloud
+    temperature: 0.1
+
+  # Consolidates pdfplumber text + vision output into final page text.
+  # Text-only task — uses a cheaper text model, not the vision model.
+  consolidation:
+    provider: ollama
+    model: glm-5.1:cloud
+    temperature: 0.0
+
+  # Applies a user rule (markdown) to consolidated text. Also text-only.
+  rule_extraction:
+    provider: ollama
+    model: glm-5.1:cloud
+    temperature: 0.0
+
+  _default:
+    provider: ollama
+    model: glm-5.1:cloud

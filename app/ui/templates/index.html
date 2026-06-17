@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Documents — PDF Parser{% endblock %}
+{% block body %}
+  <section class="card">
+    <h2>Upload PDF</h2>
+    <form method="post" action="/ui/upload" enctype="multipart/form-data">
+      <input type="file" name="file" accept="application/pdf" required />
+      <label>Rule (optional)
+        <select name="rule_id">
+          <option value="">— none (default pipeline) —</option>
+          {% for r in rules %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Callback URL (optional)<input name="callback_url" type="url" placeholder="https://example.com/hook" /></label>
+      <label>Callback secret (optional)<input name="callback_secret" placeholder="HMAC-SHA256 secret" /></label>
+      <button type="submit">Upload &amp; parse</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Recent documents</h2>
+    <table>
+      <thead><tr><th>Filename</th><th>Status</th><th>Pages</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        {% for d in documents %}
+          <tr>
+            <td>{{ d.filename }}</td>
+            <td><span class="status status-{{ d.status.value }}">{{ d.status.value }}</span></td>
+            <td>{{ d.page_count }}</td>
+            <td>{{ d.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td><a href="/ui/documents/{{ d.id }}">view</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5">No documents yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

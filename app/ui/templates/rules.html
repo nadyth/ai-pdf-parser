@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Rules — PDF Parser{% endblock %}
+{% block body %}
+  <section class="card">
+    <h2>New rule</h2>
+    <form method="post" action="/ui/rules">
+      <label>Name<input name="name" required /></label>
+      <label>Description<input name="description" /></label>
+      <label>Model route override (optional)<input name="model_route" placeholder="e.g. rule_extraction" /></label>
+      <label>Model override (optional)<input name="model_override" placeholder="e.g. ollama/minimax-m3:cloud" /></label>
+      <label>Body (markdown)
+        <textarea name="body_md" rows="12" required placeholder="# Two-column question paper
+The PDF is a question paper with English on the left and Hindi on the right.
+Extract every question as a JSON array of objects:
+- `number` (int)
+- `english` (string)
+- `hindi` (string)
+Skip the title page and instructions section."></textarea>
+      </label>
+      <button type="submit">Create</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Rules</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Description</th><th>Route</th><th>Override</th><th></th></tr></thead>
+      <tbody>
+        {% for r in rules %}
+          <tr>
+            <td>{{ r.name }}</td>
+            <td>{{ r.description or "" }}</td>
+            <td>{{ r.model_route or "" }}</td>
+            <td>{{ r.model_override or "" }}</td>
+            <td>
+              <form method="post" action="/ui/rules/{{ r.id }}/delete" onsubmit="return confirm('Delete rule?')">
+                <button type="submit" class="danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5">No rules.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

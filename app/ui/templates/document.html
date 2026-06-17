@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.filename }} — PDF Parser{% endblock %}
+{% block body %}
+  <section class="card">
+    <h2>{{ doc.filename }}</h2>
+    <dl class="meta">
+      <dt>Status</dt><dd><span class="status status-{{ doc.status.value }}">{{ doc.status.value }}</span></dd>
+      <dt>Pages</dt><dd>{{ pages|length }} / {{ doc.page_count }}</dd>
+      <dt>Created</dt><dd>{{ doc.created_at.strftime("%Y-%m-%d %H:%M:%S") }}</dd>
+      {% if doc.error %}<dt>Error</dt><dd class="error">{{ doc.error }}</dd>{% endif %}
+    {% if doc.callback_url %}
+      <dt>Callback</dt>
+      <dd><code>{{ doc.callback_url }}</code> · {{ doc.callback_status.value if doc.callback_status else "n/a" }}</dd>
+    {% endif %}
+    </dl>
+    <p>
+      <a href="/api/v1/documents/{{ doc.id }}/content">Content JSON</a> ·
+      <a href="/api/v1/documents/{{ doc.id }}/pages">Pages JSON</a>
+    </p>
+  </section>
+
+  {% if callbacks %}
+    <section class="card">
+      <h3>Callback attempts</h3>
+      <table>
+        <thead><tr><th>#</th><th>Event</th><th>Status</th><th>Latency</th><th>Error</th></tr></thead>
+        <tbody>
+        {% for c in callbacks %}
+          <tr>
+            <td>{{ c.attempt }}</td>
+            <td>{{ c.event }}</td>
+            <td>{{ c.status_code or "—" }}</td>
+            <td>{{ "%.0f ms" | format(c.duration_ms) if c.duration_ms is not none else "—" }}</td>
+            <td>{{ c.error or "" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+
+  {% if sections %}
+    <section class="card">
+      <h3>Rule output (sections)</h3>
+      {% for s in sections %}
+        <details>
+          <summary>{{ s.order + 1 }}. {{ s.title or s.kind }}</summary>
+          {% if s.content %}<pre>{{ s.content }}</pre>{% endif %}
+          {% if s.data %}<pre class="json">{{ s.data | tojson(indent=2) }}</pre>{% endif %}
+        </details>
+      {% endfor %}
+    </section>
+  {% endif %}
+
+  <section class="card">
+    <h3>Pages</h3>
+    {% for p in pages %}
+      <details>
+        <summary>Page {{ p.index + 1 }}</summary>
+        {% if p.image_path %}
+          <p><a href="/api/v1/documents/{{ doc.id }}/pages/{{ p.index }}/image" target="_blank">Rendered image</a></p>
+        {% endif %}
+        <h4>Consolidated</h4>
+        <pre>{{ p.consolidated_text or "" }}</pre>
+        <h4>pdfplumber</h4>
+        <pre class="muted">{{ p.plumber_text or "" }}</pre>
+      </details>
+    {% else %}
+      <p>No pages yet — processing.</p>
+    {% endfor %}
+  </section>
+{% endblock %}
