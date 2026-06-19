@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: pdf
       POSTGRES_PASSWORD: pdf
@@ -15,6 +16,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -24,6 +26,7 @@ services:
   migrate:
     build: .
     command: ["alembic", "upgrade", "head"]
+    restart: no
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://pdf:pdf@postgres:5432/pdfparser
@@ -33,6 +36,7 @@ services:
 
   api:
     build: .
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://pdf:pdf@postgres:5432/pdfparser
@@ -53,6 +57,7 @@ services:
 
   worker:
     build: .
+    restart: unless-stopped
     command: ["arq", "app.tasks.worker.WorkerSettings"]
     env_file: .env
     environment:
