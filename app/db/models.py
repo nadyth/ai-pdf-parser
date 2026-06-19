@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -65,6 +66,18 @@ class TimestampMixin:
     )
 
 
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+
+    documents = relationship("Document", back_populates="user")
+    rules = relationship("Rule", back_populates="user")
+
+
 class Document(Base, TimestampMixin):
     __tablename__ = "documents"
 
@@ -80,6 +93,9 @@ class Document(Base, TimestampMixin):
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     rule_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("rules.id"), nullable=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
     consolidated_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     rule_output: Mapped[dict[str, Any] | None] = mapped_column(
         MutableDict.as_mutable(JsonType), nullable=True
@@ -96,6 +112,7 @@ class Document(Base, TimestampMixin):
     )
 
     rule = relationship("Rule", back_populates="documents")
+    user = relationship("User", back_populates="documents")
     pages = relationship(
         "Page",
         back_populates="document",
@@ -159,10 +176,17 @@ class Section(Base, TimestampMixin):
 
 class Rule(Base, TimestampMixin):
     __tablename__ = "rules"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_rule_user_name"),
+        UniqueConstraint("user_id", "slug", name="uq_rule_user_slug"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_md: Mapped[str] = mapped_column(Text, nullable=False)
     model_route: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -172,6 +196,7 @@ class Rule(Base, TimestampMixin):
     )
 
     documents = relationship("Document", back_populates="rule")
+    user = relationship("User", back_populates="rules")
 
 
 class CallbackDelivery(Base, TimestampMixin):

@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Create account — PDF Parser</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body class="auth">
+  <form method="post" action="/ui/signup" class="auth-form">
+    <h1>PDF Parser</h1>
+    <p>Create a new account.</p>
+    <input name="email" type="email" placeholder="Email address" autofocus required />
+    <input name="password" type="password" placeholder="Password (8–72 characters)" required />
+    <input name="password_confirm" type="password" placeholder="Confirm password" required />
+    {% set error = request.query_params.get("error") %}
+    {% if error == "mismatch" %}<p class="error">Passwords do not match.</p>
+    {% elif error == "duplicate" %}<p class="error">Email already registered.</p>
+    {% elif error == "tooshort" %}<p class="error">Password must be at least 8 characters.</p>
+    {% elif error == "toolong" %}<p class="error">Password must be 72 characters or fewer.</p>
+    {% elif error %}<p class="error">Something went wrong. Please try again.</p>{% endif %}
+    <button type="submit">Create account</button>
+    <p class="auth-link"><a href="/ui/login">Already have an account? Sign in</a></p>
+  </form>
+</body>
+</html>

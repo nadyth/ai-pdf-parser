@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
-import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.db.models import (
     Page,
     Rule,
     Section,
+    User,
 )
 from app.schemas.callback import CallbackDeliveryOut
 from app.schemas.document import (
@@ -32,11 +33,7 @@ from app.services.pdf import render
 from app.services.storage import get_storage
 from app.tasks.queue import get_queue
 
-router = APIRouter(
-    prefix="/documents",
-    tags=["documents"],
-    dependencies=[Depends(require_api_key)],
-)
+router = APIRouter(prefix="/documents", tags=["documents"])
 
 _UPLOAD_CHUNK = 1024 * 1024  # 1 MiB
 
@@ -63,6 +60,17 @@ def _doc_to_detail(doc: Document, processed: int) -> DocumentDetail:
     return out.model_copy(update={"processed_page_count": processed})
 
 
+async def _get_doc_or_404(db: AsyncSession, document_id: str, user_id: str) -> Document:
+    doc = (
+        await db.execute(
+            select(Document).where(Document.id == document_id, Document.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(404, "Document not found.")
+    return doc
+
+
 @router.post(
     "",
     response_model=DocumentOut,
@@ -86,6 +94,7 @@ async def upload_document(
     rule_id: str | None = Form(default=None, description="Optional Rule.id to apply"),
     callback_url: str | None = Form(default=None, description="One-shot completion webhook"),
     callback_secret: str | None = Form(default=None, description="HMAC-SHA256 secret"),
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> DocumentOut:
     s = get_settings()
@@ -93,7 +102,11 @@ async def upload_document(
         raise HTTPException(400, "Only .pdf files are supported.")
 
     if rule_id:
-        rule = await db.get(Rule, rule_id)
+        rule = (
+            await db.execute(
+                select(Rule).where(Rule.id == rule_id, Rule.user_id == user.id)
+            )
+        ).scalar_one_or_none()
         if rule is None:
             raise HTTPException(404, f"Rule {rule_id} not found.")
 
@@ -102,6 +115,7 @@ async def upload_document(
         storage_path="",
         size_bytes=0,
         rule_id=rule_id,
+        user_id=user.id,
         status=DocumentStatus.pending,
         callback_url=callback_url,
         callback_secret=callback_secret,
@@ -109,66 +123,60 @@ async def upload_document(
     db.add(doc)
     await db.flush()
 
-    storage = get_storage()
-    target = storage.doc_dir(doc.id) / "original.pdf"
+    # Stream to a temp file, then upload to GCS
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
     total = 0
     try:
-        async with aiofiles.open(target, "wb") as out:
+        with tmp_path.open("wb") as out:
             while True:
                 chunk = await file.read(_UPLOAD_CHUNK)
                 if not chunk:
                     break
                 total += len(chunk)
                 if total > s.max_upload_bytes:
-                    try:
-                        await out.close()
-                    finally:
-                        try:
-                            os.remove(target)
-                        except OSError:
-                            pass
+                    tmp_path.unlink(missing_ok=True)
                     await db.delete(doc)
                     await db.commit()
                     raise HTTPException(
-                        413,
-                        f"PDF exceeds MAX_UPLOAD_BYTES ({s.max_upload_bytes}).",
+                        413, f"PDF exceeds MAX_UPLOAD_BYTES ({s.max_upload_bytes})."
                     )
-                await out.write(chunk)
+                out.write(chunk)
     except HTTPException:
         raise
     except Exception:
+        tmp_path.unlink(missing_ok=True)
         await db.delete(doc)
         await db.commit()
         raise
 
     if total == 0:
+        tmp_path.unlink(missing_ok=True)
         await db.delete(doc)
         await db.commit()
         raise HTTPException(400, "Empty upload.")
 
-    # Validate page count up-front so we reject 1500-page PDFs immediately
-    # rather than discovering it inside the worker.
     try:
-        n_pages = await render.count_pages(target)
+        n_pages = await render.count_pages(tmp_path)
     except Exception as e:
+        tmp_path.unlink(missing_ok=True)
         await db.delete(doc)
         await db.commit()
-        get_storage().delete_doc(doc.id)
         raise HTTPException(400, f"Not a valid PDF: {e}")
 
     if n_pages > s.max_pages:
+        tmp_path.unlink(missing_ok=True)
         await db.delete(doc)
         await db.commit()
-        get_storage().delete_doc(doc.id)
-        raise HTTPException(
-            413,
-            f"PDF has {n_pages} pages > MAX_PAGES={s.max_pages}.",
-        )
+        raise HTTPException(413, f"PDF has {n_pages} pages > MAX_PAGES={s.max_pages}.")
 
-    async with aiofiles.open(storage.doc_dir(doc.id) / "filename.txt", "w") as f:
-        await f.write(file.filename)
+    blob_path = f"documents/{doc.id}/original.pdf"
+    storage = get_storage()
+    await storage.upload(blob_path, tmp_path)
+    tmp_path.unlink(missing_ok=True)
 
-    doc.storage_path = str(target)
+    doc.storage_path = blob_path
     doc.size_bytes = total
     doc.page_count = n_pages
     await db.commit()
@@ -185,9 +193,16 @@ async def list_documents(
     status_filter: DocumentStatus | None = Query(default=None, alias="status"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> list[DocumentOut]:
-    stmt = select(Document).order_by(Document.created_at.desc()).limit(limit).offset(offset)
+    stmt = (
+        select(Document)
+        .where(Document.user_id == user.id)
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     if status_filter:
         stmt = stmt.where(Document.status == status_filter)
     rows = (await db.execute(stmt)).scalars().all()
@@ -198,10 +213,12 @@ async def list_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentDetail, summary="Get document detail")
-async def get_document(document_id: str, db: AsyncSession = Depends(db_session)) -> DocumentDetail:
-    doc = await db.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(404, "Document not found.")
+async def get_document(
+    document_id: str,
+    user: User = Depends(require_api_key),
+    db: AsyncSession = Depends(db_session),
+) -> DocumentDetail:
+    doc = await _get_doc_or_404(db, document_id, user.id)
     return _doc_to_detail(doc, await _processed_count(db, document_id))
 
 
@@ -210,13 +227,18 @@ async def get_document(document_id: str, db: AsyncSession = Depends(db_session))
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a document and all derived artifacts",
 )
-async def delete_document(document_id: str, db: AsyncSession = Depends(db_session)) -> None:
-    doc = await db.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(404, "Document not found.")
+async def delete_document(
+    document_id: str,
+    user: User = Depends(require_api_key),
+    db: AsyncSession = Depends(db_session),
+) -> None:
+    await _get_doc_or_404(db, document_id, user.id)
+    await db.execute(Page.__table__.delete().where(Page.document_id == document_id))
+    await db.execute(Section.__table__.delete().where(Section.document_id == document_id))
+    doc = await _get_doc_or_404(db, document_id, user.id)
     await db.delete(doc)
     await db.commit()
-    get_storage().delete_doc(document_id)
+    await get_storage().delete_prefix(f"documents/{document_id}/")
 
 
 @router.post(
@@ -227,11 +249,10 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(db_sessio
 async def reprocess(
     document_id: str,
     force: bool = Query(False, description="Delete prior pages/sections before re-running"),
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> DocumentOut:
-    doc = await db.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(404, "Document not found.")
+    doc = await _get_doc_or_404(db, document_id, user.id)
     if force:
         await db.execute(Page.__table__.delete().where(Page.document_id == document_id))
         await db.execute(Section.__table__.delete().where(Section.document_id == document_id))
@@ -258,10 +279,12 @@ async def reprocess(
     response_model=DocumentContent,
     summary="Whole-document consolidated content + rule output",
 )
-async def get_content(document_id: str, db: AsyncSession = Depends(db_session)) -> DocumentContent:
-    doc = await db.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(404, "Document not found.")
+async def get_content(
+    document_id: str,
+    user: User = Depends(require_api_key),
+    db: AsyncSession = Depends(db_session),
+) -> DocumentContent:
+    doc = await _get_doc_or_404(db, document_id, user.id)
     return DocumentContent(
         document_id=doc.id,
         consolidated_text=doc.consolidated_text,
@@ -277,8 +300,10 @@ async def get_content(document_id: str, db: AsyncSession = Depends(db_session)) 
 )
 async def list_pages(
     document_id: str,
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> list[PageOut]:
+    await _get_doc_or_404(db, document_id, user.id)
     rows = (
         await db.execute(
             select(Page).where(Page.document_id == document_id).order_by(Page.index)
@@ -295,8 +320,10 @@ async def list_pages(
 async def get_page(
     document_id: str,
     index: int,
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> PageOut:
+    await _get_doc_or_404(db, document_id, user.id)
     row = (
         await db.execute(
             select(Page).where(Page.document_id == document_id, Page.index == index)
@@ -314,19 +341,28 @@ async def get_page(
 async def get_page_image(
     document_id: str,
     index: int,
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ):
+    await _get_doc_or_404(db, document_id, user.id)
     row = (
         await db.execute(
             select(Page).where(Page.document_id == document_id, Page.index == index)
         )
     ).scalar_one_or_none()
-    if row is None or not row.image_path or not os.path.exists(row.image_path):
+    if row is None or not row.image_path:
         raise HTTPException(
             404,
             "Page image not available. (Possibly deleted by KEEP_PAGE_IMAGES=false.)",
         )
-    return FileResponse(row.image_path, media_type="image/png")
+    try:
+        data = await get_storage().read_bytes(row.image_path)
+    except Exception:
+        raise HTTPException(
+            404,
+            "Page image not available. (Possibly deleted by KEEP_PAGE_IMAGES=false.)",
+        )
+    return Response(content=data, media_type="image/png")
 
 
 @router.get(
@@ -336,8 +372,10 @@ async def get_page_image(
 )
 async def list_sections(
     document_id: str,
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> list[SectionOut]:
+    await _get_doc_or_404(db, document_id, user.id)
     rows = (
         await db.execute(
             select(Section).where(Section.document_id == document_id).order_by(Section.order)
@@ -354,8 +392,10 @@ async def list_sections(
 async def get_section(
     document_id: str,
     order: int,
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> SectionOut:
+    await _get_doc_or_404(db, document_id, user.id)
     row = (
         await db.execute(
             select(Section).where(
@@ -375,8 +415,10 @@ async def get_section(
 )
 async def list_callbacks(
     document_id: str,
+    user: User = Depends(require_api_key),
     db: AsyncSession = Depends(db_session),
 ) -> list[CallbackDeliveryOut]:
+    await _get_doc_or_404(db, document_id, user.id)
     rows = (
         await db.execute(
             select(CallbackDelivery)

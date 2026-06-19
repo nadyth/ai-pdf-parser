@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
-from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,12 +12,12 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     log_level: str = "INFO"
 
-    api_keys: list[str] = Field(default_factory=lambda: ["dev-local-key"])
-
     database_url: str = "sqlite+aiosqlite:///./storage/pdfparser.db"
     redis_url: str = "redis://localhost:6379/0"
 
-    storage_root: Path = Path("./storage")
+    gcs_bucket: str = "pdf-parser"
+    gcs_project: str = "local"
+
     pdf_render_dpi: int = 300
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
     max_pages: int = 1000
@@ -42,20 +40,7 @@ class Settings(BaseSettings):
     webhook_max_retries: int = 5
     webhook_backoff_base_seconds: float = 2.0  # 2, 4, 8, 16, 32 …
 
-    model_routes_path: Path | None = None
-
-    @field_validator("api_keys", mode="before")
-    @classmethod
-    def _split_keys(cls, v):
-        if isinstance(v, str):
-            return [k.strip() for k in v.split(",") if k.strip()]
-        return v
-
-    @field_validator("storage_root", mode="after")
-    @classmethod
-    def _ensure_storage(cls, v: Path) -> Path:
-        v.mkdir(parents=True, exist_ok=True)
-        return v
+    model_routes_path: str | None = None
 
 
 @lru_cache

@@ -8,10 +8,12 @@
 <body class="auth">
   <form method="post" action="/ui/login" class="auth-form">
     <h1>PDF Parser</h1>
-    <p>Enter an API key to continue.</p>
-    <input name="api_key" type="password" placeholder="API key" autofocus required />
-    {% if request.query_params.get("error") %}<p class="error">Invalid key.</p>{% endif %}
+    <p>Sign in to continue.</p>
+    <input name="email" type="email" placeholder="Email address" autofocus required />
+    <input name="password" type="password" placeholder="Password" required />
+    {% if request.query_params.get("error") %}<p class="error">Invalid email or password.</p>{% endif %}
     <button type="submit">Sign in</button>
+    <p class="auth-link"><a href="/ui/signup">Create an account</a></p>
   </form>
 </body>
 </html>

@@ -7,7 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.9.0",
+    "pydantic[email]>=2.9.0",
+    "bcrypt>=4.0.0",
     "pydantic-settings>=2.6.0",
     "sqlalchemy[asyncio]>=2.0.35",
     "alembic>=1.13.3",
@@ -26,6 +27,7 @@ dependencies = [
     "structlog>=24.4.0",
     "python-slugify>=8.0.4",
     "aiofiles>=24.1.0",
+    "google-cloud-storage>=2.18.0",
 ]
 
 [dependency-groups]

@@ -7,11 +7,12 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import documents, health, rules
+from app.api.v1 import auth, documents, health, rules
 from app.core.exceptions import AppError, NotFoundError
 from app.core.logging import configure_logging, log
 from app.core.settings import get_settings
-from app.db.base import Base, engine
+from app.db.base import engine
+from app.services.storage import get_storage
 from app.tasks.queue import close_queue
 from app.ui import routes as ui_routes
 
@@ -20,8 +21,7 @@ from app.ui import routes as ui_routes
 async def lifespan(app: FastAPI):
     s = get_settings()
     configure_logging(s.log_level)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    get_storage().ensure_bucket()
     log.info("startup_complete", env=s.app_env, db=_redact(s.database_url))
     yield
     await close_queue()
@@ -54,7 +54,7 @@ def _custom_openapi(app: FastAPI):
             "type": "apiKey",
             "in": "header",
             "name": "X-API-Key",
-            "description": "API key from the `API_KEYS` env var.",
+            "description": "API key returned by POST /api/v1/auth/signup or /api/v1/auth/login.",
         }
         schema["security"] = [{"ApiKeyAuth": []}]
         app.openapi_schema = schema
@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
         ),
         lifespan=lifespan,
         openapi_tags=[
+            {"name": "auth", "description": "User registration, login, and API key management."},
             {"name": "documents", "description": "Upload, list, retrieve PDFs and parsed content."},
             {"name": "rules", "description": "User-defined Markdown rules for structured extraction."},
             {"name": "health", "description": "Liveness."},
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(auth.router, prefix="/api/v1")
     app.include_router(documents.router, prefix="/api/v1")
     app.include_router(rules.router, prefix="/api/v1")
 

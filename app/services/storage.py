@@ -1,44 +1,60 @@
 from __future__ import annotations
 
-import shutil
+import asyncio
 from pathlib import Path
 
-import aiofiles
+from google.cloud import storage as gcs
+from google.cloud.exceptions import Conflict, NotFound
 
 from app.core.settings import get_settings
 
 
-class LocalStorage:
-    """Filesystem-backed storage rooted at settings.storage_root."""
+class GCSStorage:
+    def __init__(self, bucket_name: str, project: str) -> None:
+        self._bucket_name = bucket_name
+        self._client = gcs.Client(project=project)
 
-    def __init__(self, root: Path | None = None):
-        self.root = Path(root or get_settings().storage_root)
-        self.root.mkdir(parents=True, exist_ok=True)
+    def _bucket(self) -> gcs.Bucket:
+        return self._client.bucket(self._bucket_name)
 
-    def doc_dir(self, document_id: str) -> Path:
-        p = self.root / "documents" / document_id
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+    def ensure_bucket(self) -> None:
+        bucket = self._bucket()
+        try:
+            self._client.create_bucket(bucket)
+        except Conflict:
+            pass  # already exists
 
-    def pages_dir(self, document_id: str) -> Path:
-        p = self.doc_dir(document_id) / "pages"
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+    async def upload(self, blob_path: str, local: Path) -> None:
+        def _sync() -> None:
+            self._bucket().blob(blob_path).upload_from_filename(str(local))
 
-    async def save_upload(self, document_id: str, filename: str, data: bytes) -> Path:
-        target = self.doc_dir(document_id) / "original.pdf"
-        async with aiofiles.open(target, "wb") as f:
-            await f.write(data)
-        # Keep a hint of the original filename
-        async with aiofiles.open(self.doc_dir(document_id) / "filename.txt", "w") as f:
-            await f.write(filename)
-        return target
+        await asyncio.to_thread(_sync)
 
-    def delete_doc(self, document_id: str) -> None:
-        d = self.root / "documents" / document_id
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
+    async def download(self, blob_path: str, dest: Path) -> None:
+        def _sync() -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            self._bucket().blob(blob_path).download_to_filename(str(dest))
+
+        await asyncio.to_thread(_sync)
+
+    async def read_bytes(self, blob_path: str) -> bytes:
+        def _sync() -> bytes:
+            return self._bucket().blob(blob_path).download_as_bytes()
+
+        return await asyncio.to_thread(_sync)
+
+    async def delete_prefix(self, prefix: str) -> None:
+        def _sync() -> None:
+            blobs = list(self._client.list_blobs(self._bucket_name, prefix=prefix))
+            for blob in blobs:
+                try:
+                    blob.delete()
+                except NotFound:
+                    pass
+
+        await asyncio.to_thread(_sync)
 
 
-def get_storage() -> LocalStorage:
-    return LocalStorage()
+def get_storage() -> GCSStorage:
+    s = get_settings()
+    return GCSStorage(bucket_name=s.gcs_bucket, project=s.gcs_project)

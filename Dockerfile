@@ -18,8 +18,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-RUN uv sync --no-dev
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --no-dev --frozen
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # Clean slim base. No apt packages installed at all — pypdfium2 + asyncpg

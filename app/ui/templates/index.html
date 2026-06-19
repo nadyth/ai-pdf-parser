@@ -2,6 +2,20 @@
 {% block title %}Documents — PDF Parser{% endblock %}
 {% block body %}
   <section class="card">
+    <h2>API Key</h2>
+    <p class="muted">Use this key in the <code>X-API-Key</code> header to authenticate API requests.</p>
+    <div class="api-key-row">
+      <input id="api-key-input" type="password" value="{{ current_user.api_key }}" readonly />
+      <button type="button" onclick="toggleKey()">Show</button>
+      <button type="button" onclick="copyKey()">Copy</button>
+    </div>
+    <form method="post" action="/ui/regenerate-key"
+          onsubmit="return confirm('Regenerate API key? Your current key will stop working immediately.')">
+      <button type="submit" class="btn-danger">Regenerate key</button>
+    </form>
+  </section>
+
+  <section class="card">
     <h2>Upload PDF</h2>
     <form method="post" action="/ui/upload" enctype="multipart/form-data">
       <input type="file" name="file" accept="application/pdf" required />

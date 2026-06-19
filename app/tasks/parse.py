@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,8 +38,8 @@ async def _load_done_pages(document_id: str) -> set[int]:
         return {r[0] for r in rows}
 
 
-async def _persist_page(document_id: str, result: PageResult, keep_image: bool) -> None:
-    """Insert (or update) the Page row immediately, then optionally drop the PNG."""
+async def _persist_page(document_id: str, result: PageResult, image_path: str | None) -> None:
+    """Insert (or update) the Page row immediately."""
     async with SessionLocal() as db:
         existing = (
             await db.execute(
@@ -59,21 +59,15 @@ async def _persist_page(document_id: str, result: PageResult, keep_image: bool) 
                     plumber_text=plumber_t,
                     vision_text=vision_t,
                     consolidated_text=consolidated_t,
-                    image_path=str(result.image_path) if keep_image else None,
+                    image_path=image_path,
                 )
             )
         else:
             existing.plumber_text = plumber_t
             existing.vision_text = vision_t
             existing.consolidated_text = consolidated_t
-            existing.image_path = str(result.image_path) if keep_image else None
+            existing.image_path = image_path
         await db.commit()
-
-    if not keep_image:
-        try:
-            os.remove(result.image_path)
-        except OSError:
-            pass
 
 
 async def parse_document(ctx, document_id: str) -> dict:
@@ -108,48 +102,63 @@ async def parse_document(ctx, document_id: str) -> dict:
                 rule_route = rule.model_route
                 rule_model = rule.model_override
 
-        pdf_path = Path(doc.storage_path)
-        pages_dir = storage.pages_dir(document_id)
+        gcs_pdf_path = doc.storage_path
         callback_url = doc.callback_url
 
-    try:
-        n_pages = await render.count_pages(pdf_path)
-    except Exception as e:
-        return await _mark_failed(document_id, callback_url, ctx, f"page_count_failed: {e}")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = Path(tmpdir) / "original.pdf"
+        pages_dir = Path(tmpdir) / "pages"
+        pages_dir.mkdir()
 
-    if n_pages > settings.max_pages:
-        return await _mark_failed(
-            document_id,
-            callback_url,
-            ctx,
-            f"too_many_pages: {n_pages} > MAX_PAGES={settings.max_pages}",
-        )
+        try:
+            await storage.download(gcs_pdf_path, pdf_path)
+        except Exception as e:
+            return await _mark_failed(document_id, callback_url, ctx, f"download_failed: {e}")
 
-    await _set_page_count(document_id, n_pages)
-    done = await _load_done_pages(document_id)
-    if done:
-        log.info("resuming", document_id=document_id, already_done=len(done))
+        try:
+            n_pages = await render.count_pages(pdf_path)
+        except Exception as e:
+            return await _mark_failed(document_id, callback_url, ctx, f"page_count_failed: {e}")
 
-    async def _on_complete(r: PageResult) -> None:
-        await _persist_page(document_id, r, settings.keep_page_images)
+        if n_pages > settings.max_pages:
+            return await _mark_failed(
+                document_id,
+                callback_url,
+                ctx,
+                f"too_many_pages: {n_pages} > MAX_PAGES={settings.max_pages}",
+            )
 
-    async def _skip(idx: int) -> bool:
-        return idx in done
+        await _set_page_count(document_id, n_pages)
+        done = await _load_done_pages(document_id)
+        if done:
+            log.info("resuming", document_id=document_id, already_done=len(done))
 
-    try:
-        await pipeline.stream_pages(
-            pdf_path,
-            pages_dir,
-            n_pages,
-            max_concurrency=settings.page_concurrency,
-            on_page_complete=_on_complete,
-            skip_check=_skip,
-        )
-    except Exception as e:
-        log.exception("parse_failed", document_id=document_id)
-        return await _mark_failed(document_id, callback_url, ctx, str(e))
+        async def _on_complete(r: PageResult) -> None:
+            gcs_img: str | None = None
+            if settings.keep_page_images:
+                blob = f"documents/{document_id}/pages/page_{r.index:04d}.png"
+                await storage.upload(blob, r.image_path)
+                gcs_img = blob
+            r.image_path.unlink(missing_ok=True)
+            await _persist_page(document_id, r, gcs_img)
 
-    # All pages persisted. Build the consolidated text + rule output.
+        async def _skip(idx: int) -> bool:
+            return idx in done
+
+        try:
+            await pipeline.stream_pages(
+                pdf_path,
+                pages_dir,
+                n_pages,
+                max_concurrency=settings.page_concurrency,
+                on_page_complete=_on_complete,
+                skip_check=_skip,
+            )
+        except Exception as e:
+            log.exception("parse_failed", document_id=document_id)
+            return await _mark_failed(document_id, callback_url, ctx, str(e))
+
+    # All pages persisted; temp dir cleaned up. Build consolidated text + rule output.
     async with SessionLocal() as db:
         rows = (
             await db.execute(
@@ -189,7 +198,6 @@ async def parse_document(ctx, document_id: str) -> dict:
         if doc is None:
             return {"ok": False, "error": "doc_vanished"}
 
-        # Wipe any prior sections (in case of a re-run that produced different output)
         await db.execute(
             Section.__table__.delete().where(Section.document_id == document_id)
         )
