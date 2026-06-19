@@ -42,7 +42,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://pdf:pdf@postgres:5432/pdfparser
       REDIS_URL: redis://redis:6379/0
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/sa-key.json
-      # GCS_BUCKET and GCS_PROJECT are read from .env
+      # GCS_BUCKET, GCS_PROJECT, and GCS_PATH_PREFIX are read from .env
     volumes:
       - ${GCS_SA_KEY_PATH}:/secrets/sa-key.json:ro
     depends_on:
@@ -63,7 +63,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://pdf:pdf@postgres:5432/pdfparser
       REDIS_URL: redis://redis:6379/0
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/sa-key.json
-      # GCS_BUCKET and GCS_PROJECT are read from .env
+      # GCS_BUCKET, GCS_PROJECT, and GCS_PATH_PREFIX are read from .env
     volumes:
       - ${GCS_SA_KEY_PATH}:/secrets/sa-key.json:ro
     depends_on:

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     gcs_bucket: str = "pdf-parser"
     gcs_project: str = "local"
+    gcs_path_prefix: str = "pdf-parser"
 
     pdf_render_dpi: int = 300
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB

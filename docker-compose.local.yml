@@ -50,6 +50,7 @@ services:
       STORAGE_EMULATOR_HOST: http://fake-gcs:4443
       GCS_BUCKET: pdf-parser
       GCS_PROJECT: local
+      GCS_PATH_PREFIX: pdf-parser
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +73,7 @@ services:
       STORAGE_EMULATOR_HOST: http://fake-gcs:4443
       GCS_BUCKET: pdf-parser
       GCS_PROJECT: local
+      GCS_PATH_PREFIX: pdf-parser
     depends_on:
       postgres:
         condition: service_healthy
