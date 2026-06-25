@@ -10,6 +10,18 @@ Sized for **whole-book parsing** (up to `MAX_PAGES=1000`). Pages stream through 
 pipeline one at a time and are committed to the DB as soon as they're parsed, so
 progress is visible mid-job and the worker is resumable if it crashes.
 
+## 📚 Documentation
+
+Full developer documentation lives in **[`wiki/`](wiki/README.md)** — architecture, data
+model, API reference, the parsing pipeline, model routing, jobs/webhooks, configuration,
+and step-by-step playbooks for adding/removing/updating features.
+
+**Contributing (humans and LLM agents):** read the relevant wiki page **before** working
+on a feature, and **update the wiki in the same change** — a feature is not done until its
+docs are current. These rules are enforced by [`AGENTS.md`](AGENTS.md) (and surfaced to
+Claude Code via [`CLAUDE.md`](CLAUDE.md)). See
+[`wiki/13-wiki-maintenance.md`](wiki/13-wiki-maintenance.md).
+
 ## Stack
 
 - **uv** managed Python 3.12+
@@ -197,7 +209,7 @@ app/
   core/           settings.py, security.py, router.py, logging.py
   db/             base.py, models.py
   schemas/        Pydantic models
-  services/       storage.py, webhooks.py, pdf/{pipeline,plumber,render,llm,prompts}.py
+  services/       storage.py, webhooks.py, pdf/{pipeline,plumber,render,llm,prompts,text}.py
   tasks/          arq worker + parse_document + deliver_callback
   ui/             Jinja templates + static
   main.py         FastAPI factory
@@ -205,3 +217,7 @@ alembic/          migrations env
 Dockerfile
 docker-compose.yml
 ```
+
+A fully annotated layout and deeper architecture notes are in
+[`wiki/01-overview.md`](wiki/01-overview.md) and
+[`wiki/02-architecture.md`](wiki/02-architecture.md).
